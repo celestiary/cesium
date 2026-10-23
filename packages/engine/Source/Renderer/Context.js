@@ -1451,6 +1451,128 @@ Context.prototype.endFrame = function () {
 };
 
 /**
+ * Resets the WebGL state that this context caches, and the WebGL context's own
+ * state, to the defaults the context assumes.
+ * <p>
+ * The context skips WebGL calls that would set state it believes is already
+ * set: the render state of the last command, the bound framebuffer, the clear
+ * values. Call this after code outside Cesium has issued calls on the WebGL
+ * context (an {@link ExternalRenderer}, say), so the next command sets all of
+ * the state it needs. It resets the context's bindings (program, vertex
+ * array, buffers, framebuffer, renderbuffer, samplers, transform feedback),
+ * the capabilities and parameters of {@link RenderState}, the viewport, the
+ * clear values, the pixel storage parameters and the capabilities outside
+ * <code>RenderState</code> (<code>DITHER</code>,
+ * <code>SAMPLE_ALPHA_TO_COVERAGE</code>, <code>RASTERIZER_DISCARD</code>).
+ * </p>
+ * <p>
+ * It does not reset the state of WebGL objects, such as the attributes of a
+ * vertex array, the draw buffers of a framebuffer, the parameters of a texture
+ * or the uniforms of a program: code outside Cesium should change only the
+ * objects it created.
+ * </p>
+ *
+ * @private
+ */
+Context.prototype.resetState = function () {
+  const gl = this._gl;
+  const webgl2 = this._webgl2;
+  let i;
+
+  // Bindings. The default vertex array is bound first, so the element array
+  // buffer unbound is the default vertex array's.
+  gl.useProgram(null);
+  if (this.vertexArrayObject) {
+    this.glBindVertexArray(null);
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+  if (!this.vertexArrayObject) {
+    // Without vertex array objects, Cesium's vertex arrays enable and set
+    // their attributes on the default vertex array for each draw, assuming
+    // the others are disabled and not instanced.
+    const maximumVertexAttributes = ContextLimits.maximumVertexAttributes;
+    for (i = 0; i < maximumVertexAttributes; ++i) {
+      gl.disableVertexAttribArray(i);
+      if (this.instancedArrays) {
+        this.glVertexAttribDivisor(i, 0);
+      }
+      this._vertexAttribDivisors[i] = 0;
+    }
+    this._previousDrawInstanced = false;
+  }
+  gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+  if (webgl2) {
+    gl.bindBuffer(gl.COPY_READ_BUFFER, null);
+    gl.bindBuffer(gl.COPY_WRITE_BUFFER, null);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
+    gl.bindBuffer(gl.UNIFORM_BUFFER, null);
+    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
+    gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, null);
+    // Sampler objects override the parameters of the textures Cesium binds.
+    const maximumTextureUnits = ContextLimits.maximumCombinedTextureImageUnits;
+    for (i = 0; i < maximumTextureUnits; ++i) {
+      gl.bindSampler(i, null);
+    }
+  }
+  gl.activeTexture(gl.TEXTURE0);
+
+  // The default framebuffer, with its default draw and read buffers.
+  this._currentFramebuffer = undefined;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  if (this.drawBuffers) {
+    this.glDrawBuffers(scratchBackBufferArray);
+  }
+  if (webgl2) {
+    gl.readBuffer(gl.BACK);
+  }
+
+  // Capabilities outside RenderState, at their WebGL defaults.
+  gl.enable(gl.DITHER);
+  gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+  if (webgl2) {
+    gl.disable(gl.RASTERIZER_DISCARD);
+  }
+
+  // Pixel storage, at its WebGL defaults.
+  gl.pixelStorei(gl.PACK_ALIGNMENT, 4);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.pixelStorei(
+    gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,
+    gl.BROWSER_DEFAULT_WEBGL,
+  );
+  if (webgl2) {
+    gl.pixelStorei(gl.PACK_ROW_LENGTH, 0);
+    gl.pixelStorei(gl.PACK_SKIP_PIXELS, 0);
+    gl.pixelStorei(gl.PACK_SKIP_ROWS, 0);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+    gl.pixelStorei(gl.UNPACK_IMAGE_HEIGHT, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_IMAGES, 0);
+  }
+
+  // Clear values.
+  Color.clone(Color.TRANSPARENT, this._clearColor);
+  gl.clearColor(0.0, 0.0, 0.0, 0.0);
+  this._clearDepth = 1.0;
+  gl.clearDepth(1.0);
+  this._clearStencil = 0;
+  gl.clearStencil(0);
+
+  // The render and pass state, applied in full, so the next command applies
+  // whatever differs from them.
+  const renderState = this._defaultRenderState;
+  const passState = this._defaultPassState;
+  RenderState.apply(gl, renderState, passState);
+  this._currentRenderState = renderState;
+  this._currentPassState = passState;
+};
+
+/**
  * @typedef {object} ReadState
  *
  * Options defining a rectangle to read pixels from.

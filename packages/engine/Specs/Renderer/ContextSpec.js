@@ -408,6 +408,150 @@ describe(
       );
       c.destroyForSpecs();
     });
+
+    function createLinkedProgram(gl) {
+      const program = gl.createProgram();
+      const vs = gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vs, "void main() { gl_Position = vec4(0.0); }");
+      gl.compileShader(vs);
+      const fs = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fs, "void main() { gl_FragColor = vec4(1.0); }");
+      gl.compileShader(fs);
+      gl.attachShader(program, vs);
+      gl.attachShader(program, fs);
+      gl.linkProgram(program);
+      return program;
+    }
+
+    // Changes the WebGL state as code outside Cesium might.
+    function scrambleState(gl) {
+      gl.useProgram(createLinkedProgram(gl));
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bindFramebuffer(gl.FRAMEBUFFER, gl.createFramebuffer());
+      gl.bindRenderbuffer(gl.RENDERBUFFER, gl.createRenderbuffer());
+      gl.activeTexture(gl.TEXTURE3);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ZERO, gl.ZERO);
+      gl.enable(gl.CULL_FACE);
+      gl.cullFace(gl.FRONT_AND_BACK);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.NEVER);
+      gl.depthMask(false);
+      gl.enable(gl.STENCIL_TEST);
+      gl.stencilFunc(gl.NEVER, 1, 0xff);
+      gl.stencilMask(0);
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(0, 0, 0, 0);
+      gl.enable(gl.POLYGON_OFFSET_FILL);
+      gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+      gl.disable(gl.DITHER);
+      gl.colorMask(false, false, false, false);
+      gl.viewport(0, 0, 0, 0);
+      gl.clearColor(1.0, 0.0, 1.0, 1.0);
+      gl.clearDepth(0.0);
+      gl.clearStencil(1);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      if (context.vertexArrayObject) {
+        context.glBindVertexArray(context.glCreateVertexArray());
+      }
+      if (context.webgl2) {
+        gl.bindSampler(0, gl.createSampler());
+        gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, gl.createBuffer());
+        gl.bindBuffer(gl.UNIFORM_BUFFER, gl.createBuffer());
+        gl.enable(gl.RASTERIZER_DISCARD);
+        gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 7);
+      }
+    }
+
+    it("resetState restores the WebGL state the context assumes", function () {
+      if (webglStub) {
+        return;
+      }
+      const gl = context._gl;
+      scrambleState(gl);
+
+      context.resetState();
+
+      expect(gl.getParameter(gl.CURRENT_PROGRAM)).toBeNull();
+      expect(gl.getParameter(gl.ARRAY_BUFFER_BINDING)).toBeNull();
+      expect(gl.getParameter(gl.FRAMEBUFFER_BINDING)).toBeNull();
+      expect(gl.getParameter(gl.RENDERBUFFER_BINDING)).toBeNull();
+      expect(gl.getParameter(gl.ACTIVE_TEXTURE)).toEqual(gl.TEXTURE0);
+      expect(gl.isEnabled(gl.BLEND)).toBe(false);
+      expect(gl.isEnabled(gl.CULL_FACE)).toBe(false);
+      expect(gl.isEnabled(gl.DEPTH_TEST)).toBe(false);
+      expect(gl.isEnabled(gl.STENCIL_TEST)).toBe(false);
+      expect(gl.isEnabled(gl.SCISSOR_TEST)).toBe(false);
+      expect(gl.isEnabled(gl.POLYGON_OFFSET_FILL)).toBe(false);
+      expect(gl.isEnabled(gl.SAMPLE_ALPHA_TO_COVERAGE)).toBe(false);
+      expect(gl.isEnabled(gl.DITHER)).toBe(true);
+      expect(gl.getParameter(gl.DEPTH_WRITEMASK)).toBe(true);
+      expect(gl.getParameter(gl.STENCIL_WRITEMASK)).not.toEqual(0);
+      expect(gl.getParameter(gl.COLOR_WRITEMASK)).toEqual([
+        true,
+        true,
+        true,
+        true,
+      ]);
+      expect(Array.from(gl.getParameter(gl.VIEWPORT))).toEqual([
+        0,
+        0,
+        context.drawingBufferWidth,
+        context.drawingBufferHeight,
+      ]);
+      expect(Array.from(gl.getParameter(gl.COLOR_CLEAR_VALUE))).toEqual([
+        0, 0, 0, 0,
+      ]);
+      expect(gl.getParameter(gl.DEPTH_CLEAR_VALUE)).toEqual(1.0);
+      expect(gl.getParameter(gl.STENCIL_CLEAR_VALUE)).toEqual(0);
+      expect(gl.getParameter(gl.UNPACK_ALIGNMENT)).toEqual(4);
+      expect(gl.getParameter(gl.PACK_ALIGNMENT)).toEqual(4);
+      expect(gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL)).toBe(false);
+      expect(gl.getParameter(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL)).toBe(false);
+      if (context.vertexArrayObject && context.webgl2) {
+        expect(gl.getParameter(gl.VERTEX_ARRAY_BINDING)).toBeNull();
+      }
+      if (context.webgl2) {
+        expect(gl.getParameter(gl.SAMPLER_BINDING)).toBeNull();
+        expect(gl.getParameter(gl.PIXEL_UNPACK_BUFFER_BINDING)).toBeNull();
+        expect(gl.getParameter(gl.UNIFORM_BUFFER_BINDING)).toBeNull();
+        expect(gl.isEnabled(gl.RASTERIZER_DISCARD)).toBe(false);
+        expect(gl.getParameter(gl.UNPACK_ROW_LENGTH)).toEqual(0);
+      }
+    });
+
+    it("clears and draws correctly after resetState", function () {
+      if (webglStub) {
+        return;
+      }
+      // Clear once so the context caches the clear colour, then change the
+      // WebGL state behind its back.
+      context.clear(
+        new ClearCommand({
+          color: new Color(0.0, 0.0, 1.0, 1.0),
+        }),
+      );
+      expect(context).toReadPixels([0, 0, 255, 255]);
+
+      scrambleState(context._gl);
+      context.resetState();
+
+      context.clear(
+        new ClearCommand({
+          color: new Color(0.0, 0.0, 1.0, 1.0),
+        }),
+      );
+      expect(context).toReadPixels([0, 0, 255, 255]);
+
+      const fs = "void main() { out_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }";
+      const command = context.createViewportQuadCommand(fs);
+      command.execute(context);
+      expect(context).toReadPixels([0, 255, 0, 255]);
+      command.shaderProgram.destroy();
+    });
   },
   "WebGL",
 );

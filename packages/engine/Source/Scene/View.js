@@ -3,6 +3,7 @@ import Cartesian3 from "../Core/Cartesian3.js";
 import CullingVolume from "../Core/CullingVolume.js";
 import defined from "../Core/defined.js";
 import getTimestamp from "../Core/getTimestamp.js";
+import Intersect from "../Core/Intersect.js";
 import Interval from "../Core/Interval.js";
 import CesiumMath from "../Core/Math.js";
 import Matrix4 from "../Core/Matrix4.js";
@@ -25,6 +26,12 @@ import TranslucentTileClassification from "./TranslucentTileClassification.js";
 
 function CommandExtent() {
   this.command = undefined;
+  this.near = undefined;
+  this.far = undefined;
+}
+
+function ExternalRendererExtent() {
+  this.renderer = undefined;
   this.near = undefined;
   this.far = undefined;
 }
@@ -84,6 +91,11 @@ function View(scene, camera, viewport) {
   // Array of all commands that get rendered into frustums along with their near / far values.
   // Acts similar to a ManagedArray.
   this._commandExtents = [];
+
+  // The external renderers in view this frame, with the distances they span.
+  // Its objects are reused across frames.
+  this.externalRendererExtents = [];
+  this._externalRendererExtentPool = [];
 }
 
 const scratchPosition0 = new Cartesian3();
@@ -398,6 +410,62 @@ View.prototype.createPotentiallyVisibleSet = function (scene) {
       extent.far = commandFar;
       commandExtentCount++;
     }
+  }
+
+  // External renderers fit the frustums as commands do, and keep the distances
+  // they span, to be called only in the frustums they overlap.
+  const externalExtents = this.externalRendererExtents;
+  const externalExtentPool = this._externalRendererExtentPool;
+  externalExtents.length = 0;
+  const externalRenderers = scene._externalRenderers;
+  const externalRendererCount = externalRenderers.length;
+  for (let i = 0; i < externalRendererCount; ++i) {
+    const renderer = externalRenderers.get(i);
+    if (!(renderer.show ?? true)) {
+      continue;
+    }
+
+    let rendererNear;
+    let rendererFar;
+    // A renderer's bounding volume is in the globe's fixed frame: in 2D and
+    // Columbus view it is treated as unbounded.
+    const boundingVolume =
+      frameState.mode === SceneMode.SCENE3D
+        ? renderer.boundingVolume
+        : undefined;
+    if (defined(boundingVolume)) {
+      if (
+        cullingVolume.computeVisibility(boundingVolume) === Intersect.OUTSIDE ||
+        (defined(occluder) && boundingVolume.isOccluded(occluder))
+      ) {
+        continue;
+      }
+      const nearFarInterval = boundingVolume.computePlaneDistances(
+        positionWC,
+        directionWC,
+        scratchNearFarInterval,
+      );
+      rendererNear = nearFarInterval.start;
+      rendererFar = nearFarInterval.stop;
+    } else {
+      rendererNear = frustum.near;
+      rendererFar = frustum.far;
+    }
+    near = Math.min(near, rendererNear);
+    far = Math.max(far, rendererFar);
+
+    let extent = externalExtentPool[externalExtents.length];
+    if (!defined(extent)) {
+      extent = externalExtentPool[externalExtents.length] =
+        new ExternalRendererExtent();
+    }
+    extent.renderer = renderer;
+    extent.near = rendererNear;
+    extent.far = rendererFar;
+    externalExtents.push(extent);
+  }
+  for (let i = externalExtents.length; i < externalExtentPool.length; ++i) {
+    externalExtentPool[i].renderer = undefined;
   }
 
   if (shadowsEnabled) {

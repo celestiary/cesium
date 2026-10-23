@@ -35,6 +35,7 @@ import RequestScheduler from "../Core/RequestScheduler.js";
 import TaskProcessor from "../Core/TaskProcessor.js";
 import Transforms from "../Core/Transforms.js";
 import VectorProvider from "../Core/VectorProvider.js";
+import WebGLConstants from "../Core/WebGLConstants.js";
 import ClearCommand from "../Renderer/ClearCommand.js";
 import ComputeEngine from "../Renderer/ComputeEngine.js";
 import Context from "../Renderer/Context.js";
@@ -53,6 +54,7 @@ import DepthPlane from "./DepthPlane.js";
 import DerivedCommand from "./DerivedCommand.js";
 import DeviceOrientationCameraController from "./DeviceOrientationCameraController.js";
 import DynamicAtmosphereLightingType from "./DynamicAtmosphereLightingType.js";
+import ExternalRendererCollection from "./ExternalRendererCollection.js";
 import Fog from "./Fog.js";
 import FrameState from "./FrameState.js";
 import GlobeTranslucencyState from "./GlobeTranslucencyState.js";
@@ -186,6 +188,8 @@ function Scene(options) {
   this._globeTranslucencyState = new GlobeTranslucencyState();
   this._primitives = new PrimitiveCollection({ countReferences });
   this._groundPrimitives = new PrimitiveCollection({ countReferences });
+  this._externalRenderers = new ExternalRendererCollection();
+  this._externalRenderParameters = createExternalRenderParameters();
 
   this._globeHeight = undefined;
   this._globeHeightDirty = true;
@@ -1025,6 +1029,24 @@ Object.defineProperties(Scene.prototype, {
   groundPrimitives: {
     get: function () {
       return this._groundPrimitives;
+    },
+  },
+
+  /**
+   * Gets the collection of external renderers: renderers outside Cesium that
+   * draw into the scene's frame with its WebGL context, after the opaque
+   * geometry of each frustum and before its translucent geometry, so that
+   * what they draw is composited with the scene by depth.
+   * @memberof Scene.prototype
+   *
+   * @type {ExternalRendererCollection}
+   * @readonly
+   *
+   * @see ExternalRenderer
+   */
+  externalRenderers: {
+    get: function () {
+      return this._externalRenderers;
     },
   },
 
@@ -3085,6 +3107,14 @@ function executeCommands(scene, passState) {
 
     performGaussianSplatPass(scene, passState, frustumCommands);
 
+    executeExternalRenderers(
+      scene,
+      passState,
+      frustumCommands,
+      index,
+      numFrustums,
+    );
+
     if (index !== 0 && scene.mode !== SceneMode.SCENE2D) {
       // Do not overlap frustums in the translucent pass to avoid blending artifacts
       frustum.near = frustumCommands.near;
@@ -3149,6 +3179,173 @@ function executeCommands(scene, passState) {
     performIdPass(frustumCommands, Pass.TRANSLUCENT);
 
     passState.framebuffer = originalFramebuffer;
+  }
+}
+
+const scratchBackBuffers = [WebGLConstants.BACK];
+
+function createExternalRenderParameters() {
+  return {
+    gl: undefined,
+    webgl2: false,
+    framebuffer: null,
+    viewport: new BoundingRectangle(),
+    viewMatrix: new Matrix4(),
+    projectionMatrix: new Matrix4(),
+    near: 0.0,
+    far: 0.0,
+    frustumIndex: 0,
+    frustumCount: 0,
+    logarithmicDepth: false,
+    farDepthFromNearPlusOne: 0.0,
+    log2FarDepthFromNearPlusOne: 0.0,
+    oneOverLog2FarDepthFromNearPlusOne: 0.0,
+    cameraPositionWC: new Cartesian3(),
+    sunDirectionWC: new Cartesian3(),
+    lightDirectionWC: new Cartesian3(),
+    lightColor: new Cartesian3(),
+    lightColorHdr: new Cartesian3(),
+    highDynamicRange: false,
+    pixelRatio: 1.0,
+    mode: SceneMode.SCENE3D,
+    frameNumber: 0,
+    time: new JulianDate(),
+  };
+}
+
+/**
+ * Fills the parameters given to an external renderer from the frustum and
+ * pass being drawn. They are filled again for each renderer, in case one
+ * changes them.
+ *
+ * @private
+ */
+function updateExternalRenderParameters(
+  scene,
+  passState,
+  frustumIndex,
+  frustumCount,
+) {
+  const { context, frameState } = scene;
+  const { uniformState } = context;
+  const parameters = scene._externalRenderParameters;
+
+  parameters.gl = context._gl;
+  parameters.webgl2 = context.webgl2;
+  const framebuffer = passState.framebuffer;
+  parameters.framebuffer = defined(framebuffer)
+    ? framebuffer._framebuffer
+    : null;
+  const viewport = passState.viewport;
+  if (defined(viewport)) {
+    BoundingRectangle.clone(viewport, parameters.viewport);
+  } else {
+    parameters.viewport.x = 0;
+    parameters.viewport.y = 0;
+    parameters.viewport.width = context.drawingBufferWidth;
+    parameters.viewport.height = context.drawingBufferHeight;
+  }
+
+  Matrix4.clone(uniformState.view, parameters.viewMatrix);
+  Matrix4.clone(uniformState.projection, parameters.projectionMatrix);
+  const currentFrustum = uniformState.currentFrustum;
+  parameters.near = currentFrustum.x;
+  parameters.far = currentFrustum.y;
+  parameters.frustumIndex = frustumIndex;
+  parameters.frustumCount = frustumCount;
+  parameters.logarithmicDepth = frameState.useLogDepth;
+  parameters.farDepthFromNearPlusOne = uniformState.farDepthFromNearPlusOne;
+  parameters.log2FarDepthFromNearPlusOne =
+    uniformState.log2FarDepthFromNearPlusOne;
+  parameters.oneOverLog2FarDepthFromNearPlusOne =
+    uniformState.oneOverLog2FarDepthFromNearPlusOne;
+
+  Matrix4.getTranslation(uniformState.inverseView, parameters.cameraPositionWC);
+  Cartesian3.clone(uniformState.sunDirectionWC, parameters.sunDirectionWC);
+  Cartesian3.clone(uniformState.lightDirectionWC, parameters.lightDirectionWC);
+  Cartesian3.clone(uniformState.lightColor, parameters.lightColor);
+  Cartesian3.clone(uniformState.lightColorHdr, parameters.lightColorHdr);
+  parameters.highDynamicRange = scene._hdr === true;
+  parameters.pixelRatio = frameState.pixelRatio;
+  parameters.mode = frameState.mode;
+  parameters.frameNumber = frameState.frameNumber;
+  JulianDate.clone(frameState.time, parameters.time);
+  return parameters;
+}
+
+/**
+ * Calls the external renderers that overlap a frustum, after its opaque
+ * geometry, with the pass's framebuffer bound. Cesium's cached WebGL state is
+ * reset after each, since a renderer may change any of it.
+ *
+ * @param {Scene} scene The scene.
+ * @param {PassState} passState The state for the current render pass.
+ * @param {FrustumCommands} frustumCommands The frustum being drawn.
+ * @param {number} frustumIndex The frustum's index, 0 being the nearest.
+ * @param {number} frustumCount The number of frustums.
+ *
+ * @private
+ */
+function executeExternalRenderers(
+  scene,
+  passState,
+  frustumCommands,
+  frustumIndex,
+  frustumCount,
+) {
+  const extents = scene._view.externalRendererExtents;
+  const length = extents.length;
+  if (length === 0) {
+    return;
+  }
+
+  const { context, frameState } = scene;
+  const passes = frameState.passes;
+  if (
+    !passes.render ||
+    passes.pick ||
+    passes.pickVoxel ||
+    passes.depth ||
+    scene._environmentState.renderTranslucentDepthForPick
+  ) {
+    return;
+  }
+
+  const gl = context._gl;
+  const framebuffer = passState.framebuffer;
+  for (let i = 0; i < length; ++i) {
+    const extent = extents[i];
+    if (
+      extent.near > frustumCommands.far ||
+      extent.far < frustumCommands.near
+    ) {
+      continue;
+    }
+
+    const parameters = updateExternalRenderParameters(
+      scene,
+      passState,
+      frustumIndex,
+      frustumCount,
+    );
+
+    // Bind the pass's framebuffer and viewport, as a command would see them.
+    gl.bindFramebuffer(gl.FRAMEBUFFER, parameters.framebuffer);
+    if (context.drawBuffers) {
+      context.glDrawBuffers(
+        defined(framebuffer)
+          ? framebuffer._getActiveColorAttachments()
+          : scratchBackBuffers,
+      );
+    }
+    const viewport = parameters.viewport;
+    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+
+    try {
+      extent.renderer.render(parameters);
+    } finally {
+      context.resetState();
+    }
   }
 }
 
@@ -5515,6 +5712,7 @@ Scene.prototype.destroy = function () {
   this._primitives = this._primitives && this._primitives.destroy();
   this._groundPrimitives =
     this._groundPrimitives && this._groundPrimitives.destroy();
+  this._externalRenderers.removeAll();
   this._globe = this._globe && this._globe.destroy();
   this._removeTerrainProviderReadyListener =
     this._removeTerrainProviderReadyListener &&
