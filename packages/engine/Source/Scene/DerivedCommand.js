@@ -175,11 +175,17 @@ function getLogDepthShaderProgram(context, shaderProgram) {
       sources[i] = ShaderSource.replaceMain(sources[i], "czm_log_depth_main");
     }
 
+    // netgl_reproject is the identity (an automatic uniform) unless a NetGL
+    // host reprojects the frame: applied here, before czm_vertexLogDepth
+    // reads gl_Position, so the log depth follows the corrected position.
     const logMain = `
+
+uniform mat4 netgl_reproject;
 
 void main()
 {
     czm_log_depth_main();
+    gl_Position = netgl_reproject * gl_Position;
     czm_vertexLogDepth();
 }
 `;

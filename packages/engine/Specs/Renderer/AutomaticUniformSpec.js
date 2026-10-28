@@ -85,6 +85,21 @@ describe(
       }).contextToRender();
     });
 
+    it("has netgl_reproject, the identity", function () {
+      // Not a czm_ uniform: the shader declares it, as a NetGL host's
+      // reprojection expects (DerivedCommand's log-depth shaders, the
+      // viewport quad).
+      const fs =
+        "uniform mat4 netgl_reproject; " +
+        "void main() { " +
+        "  out_FragColor = vec4(netgl_reproject == mat4(1.0)); " +
+        "}";
+      expect({
+        context: context,
+        fragmentShader: fs,
+      }).contextToRender();
+    });
+
     it("has czm_viewport", function () {
       const fs =
         "void main() { " +

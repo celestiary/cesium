@@ -1918,5 +1918,29 @@ const AutomaticUniforms = {
       return uniformState.ellipsoid.oneOverRadii;
     },
   }),
+
+  /**
+   * The correction a NetGL host applies to a frame it composes for a view
+   * other than the one it was drawn for (portal-netgl's host reprojection):
+   * the identity here, unless a host replaying Cesium's calls into its own
+   * context sets its own. Declared, under portal-netgl's name, by the
+   * vertex shaders the log-depth derived commands make (which apply it
+   * before {@link czm_vertexLogDepth} reads <code>gl_Position</code>) and by
+   * the viewport quad (which doesn't, so its copies stay put). Not a
+   * <code>czm_</code> uniform, so never declared automatically.
+   *
+   * @example
+   * // GLSL declaration
+   * uniform mat4 netgl_reproject;
+   *
+   * gl_Position = netgl_reproject * gl_Position;
+   */
+  netgl_reproject: new AutomaticUniform({
+    size: 1,
+    datatype: WebGLConstants.FLOAT_MAT4,
+    getValue: function () {
+      return Matrix4.IDENTITY;
+    },
+  }),
 };
 export default AutomaticUniforms;
