@@ -127,6 +127,20 @@ uniform float u_lambertDiffuseMultiplier;
 uniform float u_vertexShadowDarkness;
 #endif
 
+// Imagery taken as sRGB-encoded (Globe#imagerySrgb): each sample decoded to
+// linear light before it is blended and lit, and the lit colour encoded back
+// to sRGB for the framebuffer.  IEC 61966-2-1's curves, not a 2.2 power.
+uniform float u_imagerySrgb;
+vec3 imagerySrgbToLinear(vec3 c)
+{
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+}
+vec3 imageryLinearToSrgb(vec3 c)
+{
+    c = max(c, 0.0);
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+}
+
 in vec3 v_positionMC;
 in vec3 v_positionEC;
 in vec3 v_textureCoordinates;
@@ -234,6 +248,7 @@ vec4 sampleAndBlend(
 #else
     color = pow(color, vec3(textureOneOverGamma));
 #endif
+    color = mix(color, imagerySrgbToLinear(color), u_imagerySrgb);
 
 #ifdef APPLY_SPLIT
     float splitPosition = czm_splitPosition;
@@ -590,6 +605,7 @@ void main()
     }
 #endif
 
+    finalColor.rgb = mix(finalColor.rgb, imageryLinearToSrgb(finalColor.rgb), u_imagerySrgb);
     out_FragColor =  finalColor;
 }
 

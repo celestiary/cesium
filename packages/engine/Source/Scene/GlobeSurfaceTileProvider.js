@@ -130,6 +130,7 @@ class GlobeSurfaceTileProvider {
     this.undergroundColorAlphaByDistance = undefined;
 
     this.lambertDiffuseMultiplier = 0.0;
+    this.imagerySrgb = false;
 
     this.materialUniformMap = undefined;
     this._materialUniformMap = undefined;
@@ -2101,6 +2102,9 @@ function createTileUniformMap(frameState, globeSurfaceTileProvider) {
     u_vertexShadowDarkness: function () {
       return this.properties.vertexShadowDarkness;
     },
+    u_imagerySrgb: function () {
+      return this.properties.imagerySrgb ? 1.0 : 0.0;
+    },
     u_vectorSegmentTexture: function () {
       return (
         this.properties.vectorSegmentTexture ??
@@ -2235,6 +2239,7 @@ function createTileUniformMap(frameState, globeSurfaceTileProvider) {
       undergroundColorAlphaByDistance: new Cartesian4(),
       lambertDiffuseMultiplier: 0.0,
       vertexShadowDarkness: 0.0,
+      imagerySrgb: false,
 
       vectorSegmentTexture: undefined,
       vectorWidthTexture: undefined,
@@ -2567,6 +2572,7 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
 
   const lambertDiffuseMultiplier = tileProvider.lambertDiffuseMultiplier;
   const vertexShadowDarkness = tileProvider.vertexShadowDarkness;
+  const imagerySrgb = tileProvider.imagerySrgb;
 
   const hasWaterMask = tileProvider.hasWaterMask && defined(waterMaskTexture);
   const showReflectiveOcean = hasWaterMask && tileProvider.showWaterEffect;
@@ -2889,6 +2895,7 @@ function addDrawCommandsForTile(tileProvider, tile, frameState) {
 
     uniformMapProperties.lambertDiffuseMultiplier = lambertDiffuseMultiplier;
     uniformMapProperties.vertexShadowDarkness = vertexShadowDarkness;
+    uniformMapProperties.imagerySrgb = imagerySrgb;
 
     const highlightFillTile =
       !defined(surfaceTile.vertexArray) &&

@@ -746,6 +746,44 @@ describe(
       expect(tileCommandCount).toBeGreaterThan(0);
     });
 
+    it("passes the globe's imagerySrgb as a uniform", async function () {
+      const provider = await SingleTileImageryProvider.fromUrl(
+        "Data/Images/Red16x16.png",
+      );
+      scene.imageryLayers.addImageryProvider(provider);
+
+      switchViewMode(
+        SceneMode.SCENE3D,
+        new GeographicProjection(Ellipsoid.WGS84),
+      );
+
+      await updateUntilDone(scene.globe);
+
+      function tileUniformValues() {
+        scene.renderForSpecs();
+        const values = [];
+        const commandList = scene.frameState.commandList;
+        for (let i = 0; i < commandList.length; ++i) {
+          const uniforms = commandList[i].uniformMap;
+          if (defined(uniforms) && defined(uniforms.u_imagerySrgb)) {
+            values.push(uniforms.u_imagerySrgb());
+          }
+        }
+        expect(values.length).toBeGreaterThan(0);
+        return values;
+      }
+
+      expect(scene.globe.imagerySrgb).toBe(false);
+      for (const value of tileUniformValues()) {
+        expect(value).toEqual(0.0);
+      }
+
+      scene.globe.imagerySrgb = true;
+      for (const value of tileUniformValues()) {
+        expect(value).toEqual(1.0);
+      }
+    });
+
     it("renders imagery cutout", async function () {
       expect(scene).toRender([0, 0, 0, 255]);
 

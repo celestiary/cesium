@@ -321,6 +321,71 @@ describe(
       });
     });
 
+    describe("imagerySrgb", function () {
+      it("defaults to false", function () {
+        expect(globe.imagerySrgb).toBe(false);
+      });
+
+      // A grey layer (127 of 255), unlit and with nothing else adding light.
+      async function grey(brightness) {
+        globe.showGroundAtmosphere = false;
+        const layerCollection = globe.imageryLayers;
+        layerCollection.removeAll();
+        const imageryProvider = await SingleTileImageryProvider.fromUrl(
+          "Data/Images/Gray.png",
+        );
+        const layer = layerCollection.addImageryProvider(imageryProvider);
+        layer.brightness = brightness;
+
+        scene.camera.setView({
+          destination: new Rectangle(0.0001, 0.0001, 0.0025, 0.0025),
+        });
+        await updateUntilDone(globe);
+      }
+
+      function expectGrey(value) {
+        expect(scene).toRenderAndCall(function (rgba) {
+          for (let i = 0; i < 3; ++i) {
+            expect(Math.abs(rgba[i] - value)).toBeLessThanOrEqual(1.5);
+          }
+          expect(rgba[3]).toBe(255);
+        });
+      }
+
+      async function withoutFog(callback) {
+        const fogEnabled = scene.fog.enabled;
+        scene.fog.enabled = false;
+        try {
+          await callback();
+        } finally {
+          scene.fog.enabled = fogEnabled;
+        }
+      }
+
+      it("leaves unadjusted imagery as stored", async function () {
+        await withoutFog(async function () {
+          await grey(1.0);
+          expectGrey(127);
+          // Decoded and encoded back: the same value.
+          globe.imagerySrgb = true;
+          expectGrey(127);
+        });
+      });
+
+      it("scales the imagery's linear light, not its encoded value", async function () {
+        await withoutFog(async function () {
+          await grey(0.5);
+          // Half of the stored value: 63.5.
+          expectGrey(63.5);
+          // Half of its light by sRGB's curves: 127 decodes to 0.2122, half
+          // that encodes to 0.3593, 91.6 (encoding without the decode would
+          // give 136.7).
+          globe.imagerySrgb = true;
+          expectGrey(91.6);
+        });
+      });
+    });
+
     it("renders with hue shift", async function () {
       const layerCollection = globe.imageryLayers;
       layerCollection.removeAll();

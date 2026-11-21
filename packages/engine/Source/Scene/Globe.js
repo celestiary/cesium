@@ -176,6 +176,18 @@ function Globe(ellipsoid) {
   this.lambertDiffuseMultiplier = 0.9;
 
   /**
+   * Whether the imagery's colours are sRGB-encoded, as pictures are: when true, each
+   * imagery sample is decoded to linear light before it is blended and lit, and the
+   * lit colour is encoded back to sRGB for the framebuffer, so lighting multiplies light,
+   * not encoded values. For a renderer that composites the globe into a linear pipeline.
+   * With <code>false</code>, the default, imagery is blended and lit as stored.
+   *
+   * @type {boolean}
+   * @default false
+   */
+  this.imagerySrgb = false;
+
+  /**
    * Enable dynamic lighting effects on atmosphere and fog. This only takes effect
    * when <code>enableLighting</code> is <code>true</code>.
    *
@@ -1075,6 +1087,7 @@ Globe.prototype.beginFrame = function (frameState) {
     tileProvider.undergroundColorAlphaByDistance =
       this._undergroundColorAlphaByDistance;
     tileProvider.lambertDiffuseMultiplier = this.lambertDiffuseMultiplier;
+    tileProvider.imagerySrgb = this.imagerySrgb;
 
     surface.beginFrame(frameState);
   }

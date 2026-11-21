@@ -1,5 +1,13 @@
 # Change Log
 
+## 1.146 - Unreleased
+
+### @cesium/engine
+
+#### Additions :tada:
+
+- Added `Globe.imagerySrgb`: when `true`, the globe's imagery is decoded from sRGB to linear light, by sRGB's own curve, before its layers are blended and lit, and the lit colour is encoded back to sRGB for the frame, so lighting and layer adjustments scale light rather than encoded values. Defaults to `false`, which renders as before.
+
 ## 1.145 - 2026-09-02
 
 ### @cesium/engine
